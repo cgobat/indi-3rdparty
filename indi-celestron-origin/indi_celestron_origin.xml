@@ -12,4 +12,10 @@
       <version>1.0</version>
     </device>
   </devGroup>
+  <devGroup group="Focusers">
+    <device label="Origin Focuser" manufacturer="Celestron">
+      <driver name="indi_celestron_origin">indi_celestron_origin</driver>
+      <version>1.0</version>
+    </device>
+  </devGroup>
 </driversList>
