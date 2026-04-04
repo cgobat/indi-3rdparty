@@ -130,6 +130,8 @@ bool OriginTelescope::initProperties()
     
     addDebugControl();
 
+    defineProperty(&AddressTP);
+
     // Start the INDI base class timer - it will automatically call ReadScopeStatus()
     SetTimer(getCurrentPollingPeriod());
     qDebug() << ("Timer set");
@@ -142,16 +144,6 @@ bool OriginTelescope::initProperties()
 bool OriginTelescope::updateProperties()
 {
     INDI::Telescope::updateProperties();
-    
-    if (isConnected())
-    {
-        defineProperty(&AddressTP);
-    }
-    else
-    {
-        deleteProperty(AddressTP.name);
-    }
-    
     return true;
 }
 
