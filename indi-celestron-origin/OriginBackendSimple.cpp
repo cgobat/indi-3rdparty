@@ -521,6 +521,23 @@ void OriginBackendSimple::poll()
     if (!m_connected)
         return;
     
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (nowMs - m_lastMountStatusRequestMs > 1000)
+    {
+        sendCommand("GetStatus", "Mount");
+        m_lastMountStatusRequestMs = nowMs;
+    }
+    if (nowMs - m_lastFocuserStatusRequestMs > 1000)
+    {
+        sendCommand("GetStatus", "Focuser");
+        m_lastFocuserStatusRequestMs = nowMs;
+    }
+    if (nowMs - m_lastCameraStatusRequestMs > 3000)
+    {
+        sendCommand("GetCaptureParameters", "Camera");
+        m_lastCameraStatusRequestMs = nowMs;
+    }
+
     // Check for incoming messages
     int messageCount = 0;
     while (m_webSocket->hasData())
@@ -544,27 +561,29 @@ bool OriginBackendSimple::connectToTelescope(const QString& host, int port)
 {
     m_connectedHost = host;
     m_connectedPort = port;
-    
+
     // Save for reconnection
     m_lastConnectedHost = host;
     m_lastConnectedPort = port;
-    
+
     std::string path = "/SmartScope-1.0/mountControlEndpoint";
-    
+
     qDebug() << "Connecting to Origin at" << host << ":" << port;
-    
+
     if (!m_webSocket->connect(host.toStdString(), port, path))
     {
         qWarning() << "Failed to connect WebSocket";
         return false;
     }
-    
+
     m_connected = true;
     qDebug() << "WebSocket connected";
-    
+
     // Send initial status request
     sendCommand("GetStatus", "Mount");
-    
+    sendCommand("GetStatus", "Focuser");
+    sendCommand("GetCaptureParameters", "Camera");
+
     return true;
 }
 
@@ -582,10 +601,12 @@ bool OriginBackendSimple::reconnectWebSocket()
     {
         m_connected = true;
         qDebug() << "WebSocket reconnected successfully";
-        
+
         // Re-request status to sync state
         sendCommand("GetStatus", "Mount");
-        
+        sendCommand("GetStatus", "Focuser");
+        sendCommand("GetCaptureParameters", "Camera");
+
         return true;
     }
     else
@@ -609,12 +630,12 @@ void OriginBackendSimple::processMessage(const std::string& message)
 {
     QString qmsg = QString::fromStdString(message);
     QJsonDocument doc = QJsonDocument::fromJson(qmsg.toUtf8());
-    
+
     if (!doc.isObject())
         return;
-    
+
     QJsonObject obj = doc.object();
-    
+
     // Parse telescope data
     QString source = obj["Source"].toString();
     if (false) qDebug() << "Processing message from:" << source;
@@ -626,20 +647,47 @@ void OriginBackendSimple::processMessage(const std::string& message)
             m_status.raPosition = radiansToHours(obj["Ra"].toDouble());
         if (obj.contains("Dec"))
             m_status.decPosition = radiansToDegrees(obj["Dec"].toDouble());
+        if (obj.contains("Alt"))
+            m_status.altPosition = radiansToDegrees(obj["Alt"].toDouble());
+        if (obj.contains("Azm"))
+            m_status.azPosition = radiansToDegrees(obj["Azm"].toDouble());
         if (obj.contains("IsTracking"))
             m_status.isTracking = obj["IsTracking"].toBool();
         if (obj.contains("IsGotoOver"))
             m_status.isSlewing = !obj["IsGotoOver"].toBool();
-        
+
         // Call status callback
         if (m_statusCallback)
             m_statusCallback();
     }
-    
+    else if (source == "Focuser")
+    {
+        if (obj.contains("Position"))
+            m_status.focuserPosition = obj["Position"].toInt();
+        if (obj.contains("CalibrationLowerLimit"))
+            m_status.focuserMin = obj["CalibrationLowerLimit"].toInt();
+        if (obj.contains("CalibrationUpperLimit"))
+            m_status.focuserMax = obj["CalibrationUpperLimit"].toInt();
+        if (obj.contains("IsMoveToOver"))
+            m_status.focuserMoving = !obj["IsMoveToOver"].toBool();
+    }
+    else if (source == "Camera")
+    {
+        if (obj.contains("ISO"))
+            m_status.cameraISO = obj["ISO"].toInt();
+        if (obj.contains("Exposure"))
+            m_status.cameraExposure = obj["Exposure"].toDouble();
+    }
+    else if (source == "Environment")
+    {
+        if (obj.contains("CameraTemperature"))
+            m_status.temperature = obj["CameraTemperature"].toDouble();
+    }
+
     // Handle image notifications
     QString command = obj["Command"].toString();
     QString type = obj["Type"].toString();
-    
+
     if (source == "ImageServer" && command == "NewImageReady" && type == "Notification")
     {
         QString filePath = obj["FileLocation"].toString();
@@ -732,18 +780,43 @@ void OriginBackendSimple::setAutoReconnect(bool enable)
     qDebug() << "Auto-reconnect" << (enable ? "enabled" : "disabled");
 }
 
+bool OriginBackendSimple::moveFocuserAbsolute(int position)
+{
+    QJsonObject params;
+    params["Position"] = position;
+    sendCommand("Move", "Focuser", params);
+    return true;
+}
+
+bool OriginBackendSimple::moveFocuserRelative(int delta)
+{
+    return moveFocuserAbsolute(m_status.focuserPosition + delta);
+}
+
+bool OriginBackendSimple::abortFocuser()
+{
+    sendCommand("Abort", "Focuser");
+    return true;
+}
+
+bool OriginBackendSimple::syncFocuser(int)
+{
+    return true;
+}
+
 bool OriginBackendSimple::takeSnapshot(double exposure, int iso)
 {
     QJsonObject params;
     params["ExposureTime"] = exposure;
     params["ISO"] = iso;
-    
+
     sendCommand("RunSampleCapture", "TaskController", params);
     return true;
 }
 
 bool OriginBackendSimple::abortExposure()
 {
+    sendCommand("CancelImaging", "TaskController");
     return true;
 }
 
