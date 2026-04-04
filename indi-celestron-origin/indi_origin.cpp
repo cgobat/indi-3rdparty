@@ -4,6 +4,7 @@
 #include <memory>
 #include <cstring>
 #include <cmath>
+#include <algorithm>
 #include <sys/time.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -52,6 +53,7 @@ void OriginTelescope::jnowToJ2000(double ra_jnow, double dec_jnow,
 // INDI requires these for driver registration
 std::unique_ptr<OriginTelescope> telescope(new OriginTelescope());
 std::unique_ptr<OriginCamera> camera(new OriginCamera());
+std::unique_ptr<OriginFocuser> focuser(new OriginFocuser());
 std::unique_ptr<OriginBackendSimple> backend(new OriginBackendSimple());
 
 //=============================================================================
@@ -61,7 +63,7 @@ std::unique_ptr<OriginBackendSimple> backend(new OriginBackendSimple());
 OriginTelescope::OriginTelescope()
 {
     setVersion(1, 0);
-    
+
     SetTelescopeCapability(
         TELESCOPE_CAN_GOTO | 
         TELESCOPE_CAN_SYNC | 
@@ -93,8 +95,8 @@ bool OriginTelescope::initProperties()
     qDebug() << ("initProperties() called");
     
     SetTelescopeCapability(
-        TELESCOPE_CAN_GOTO | 
-        TELESCOPE_CAN_SYNC | 
+        TELESCOPE_CAN_GOTO |
+        TELESCOPE_CAN_SYNC |
         TELESCOPE_CAN_ABORT |
         TELESCOPE_CAN_PARK |
         TELESCOPE_HAS_TIME |
@@ -322,14 +324,14 @@ bool OriginTelescope::Sync(double ra, double dec)
 {
     if (!m_connected)
         return false;
-    
+
     // Convert JNow → J2000
     double ra_j2000, dec_j2000;
     jnowToJ2000(ra, dec, &ra_j2000, &dec_j2000);
-    
-    qDebug() << "SYNC: JNow (" << ra << "," << dec << ") → J2000 (" 
+
+    qDebug() << "SYNC: JNow (" << ra << "," << dec << ") → J2000 ("
              << ra_j2000 << "," << dec_j2000 << ")";
-    
+
     return backend->syncPosition(ra_j2000, dec_j2000);
 }
 
@@ -355,7 +357,7 @@ bool OriginTelescope::UnPark()
 {
     if (!m_connected)
         return false;
-    
+
     qDebug() << ("Unparking telescope");
     return backend->unparkMount();
 }
@@ -529,13 +531,14 @@ bool OriginCamera::StartExposure(float duration)
 bool OriginCamera::AbortExposure()
 {
     qDebug() << "Aborting exposure";
-    
+
+    backend->abortExposure();
     InExposure = false;
     m_imageReady = false;
     m_waitingForImage = false;
     m_useNextImage = false;
     m_pendingImageData.clear();
-    
+
     return true;
 }
 
@@ -810,6 +813,129 @@ bool OriginCamera::ISNewSwitch(const char *dev, const char *name, ISState *state
     }
     
     return INDI::CCD::ISNewSwitch(dev, name, states, names, n);
+}
+
+//=============================================================================
+// FOCUSER IMPLEMENTATION
+//=============================================================================
+
+OriginFocuser::OriginFocuser()
+{
+    setVersion(1, 0);
+    SetCapability(FOCUSER_CAN_ABS_MOVE | FOCUSER_CAN_REL_MOVE | FOCUSER_CAN_ABORT | FOCUSER_CAN_SYNC);
+}
+
+OriginFocuser::~OriginFocuser() = default;
+
+const char *OriginFocuser::getDefaultName()
+{
+    return "Origin Focuser";
+}
+
+bool OriginFocuser::initProperties()
+{
+    INDI::Focuser::initProperties();
+    FocusAbsPosN[0].min = 0;
+    FocusAbsPosN[0].max = 60000;
+    FocusAbsPosN[0].step = 1;
+    FocusRelPosN[0].min = 1;
+    FocusRelPosN[0].max = 10000;
+    FocusRelPosN[0].step = 1;
+    FocusMaxPosN[0].value = 60000;
+    FocusMaxPosN[0].min = 1;
+    FocusMaxPosN[0].max = 60000;
+    FocusMaxPosN[0].step = 1;
+    return true;
+}
+
+bool OriginFocuser::updateProperties()
+{
+    INDI::Focuser::updateProperties();
+    return true;
+}
+
+bool OriginFocuser::Connect()
+{
+    m_connected = true;
+    backend->requestFocuserStatus();
+    SetTimer(getCurrentPollingPeriod());
+    return true;
+}
+
+bool OriginFocuser::Disconnect()
+{
+    m_connected = false;
+    return true;
+}
+
+IPState OriginFocuser::MoveAbsFocuser(uint32_t targetTicks)
+{
+    if (!m_connected || !backend->moveFocuserAbsolute(static_cast<int>(targetTicks)))
+        return IPS_ALERT;
+
+    m_targetPosition = targetTicks;
+    FocusAbsPosNP.s = IPS_BUSY;
+    return IPS_BUSY;
+}
+
+IPState OriginFocuser::MoveRelFocuser(FocusDirection dir, uint32_t ticks)
+{
+    const int signedTicks = dir == FOCUS_INWARD ? -static_cast<int>(ticks) : static_cast<int>(ticks);
+    if (!m_connected || !backend->moveFocuserRelative(signedTicks))
+        return IPS_ALERT;
+
+    m_targetPosition = static_cast<uint32_t>(std::max(0, m_lastPosition + signedTicks));
+    FocusRelPosNP.s = IPS_BUSY;
+    return IPS_BUSY;
+}
+
+bool OriginFocuser::AbortFocuser()
+{
+    return m_connected && backend->abortFocuser();
+}
+
+bool OriginFocuser::SyncFocuser(uint32_t ticks)
+{
+    if (!m_connected)
+        return false;
+
+    m_lastPosition = static_cast<int>(ticks);
+    m_hasPosition = true;
+    FocusAbsPosN[0].value = ticks;
+    FocusAbsPosNP.apply();
+    return backend->syncFocuser(static_cast<int>(ticks));
+}
+
+void OriginFocuser::TimerHit()
+{
+    if (!m_connected)
+        return;
+
+    backend->poll();
+    auto status = backend->status();
+
+    FocusAbsPosN[0].min = status.focuserMin;
+    FocusAbsPosN[0].max = status.focuserMax;
+    FocusMaxPosN[0].value = status.focuserMax;
+    FocusAbsPosN[0].value = status.focuserPosition;
+    m_lastPosition = status.focuserPosition;
+    m_hasPosition = true;
+
+    if (status.focuserMoving)
+    {
+        FocusAbsPosNP.s = IPS_BUSY;
+        FocusRelPosNP.s = IPS_BUSY;
+    }
+    else
+    {
+        FocusAbsPosNP.s = IPS_OK;
+        FocusRelPosNP.s = IPS_OK;
+    }
+
+    FocusAbsPosNP.apply();
+    FocusRelPosNP.apply();
+    FocusMaxPosNP.apply();
+    SetTimer(getCurrentPollingPeriod());
 }
 
 bool OriginCamera::saveConfigItems(FILE *fp)

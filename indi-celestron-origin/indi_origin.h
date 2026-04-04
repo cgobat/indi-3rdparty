@@ -2,6 +2,7 @@
 
 #include <inditelescope.h>
 #include <indiccd.h>
+#include <indifocuser.h>
 #include <memory>
 #include "TelescopeData.hpp"
 #include "OriginBackendSimple.hpp"
@@ -15,7 +16,7 @@ public:
     virtual const char *getDefaultName() override;
     virtual bool initProperties() override;
     virtual bool updateProperties() override;
-    
+
 protected:
     virtual bool Connect() override;
     virtual bool Disconnect() override;
@@ -31,10 +32,10 @@ protected:
 private:
     OriginDiscovery m_discovery;
     bool m_telescopeDiscovered {false};
-    
+
     ITextVectorProperty AddressTP;
     IText AddressT[2] {};
-    
+
     double m_currentRA {0};
     double m_currentDec {0};
     bool m_connected {false};
@@ -43,7 +44,7 @@ private:
     void j2000ToJNow(double ra_j2000, double dec_j2000,
                      double *ra_jnow, double *dec_jnow);
     void jnowToJ2000(double ra_jnow, double dec_jnow,
-                     double *ra_j2000, double *dec_j2000);  
+                     double *ra_j2000, double *dec_j2000);
 };
 
 class OriginCamera : public INDI::CCD
@@ -66,40 +67,66 @@ protected:
     virtual bool UpdateCCDFrame(int, int, int, int) override;
     virtual bool UpdateCCDBin(int binx, int biny) override;
     virtual void TimerHit() override;
-    
+
     // Only need this for the preview/full mode switch
-    virtual bool ISNewSwitch(const char *dev, const char *name, ISState *states, 
-                            char *names[], int n) override;
+    virtual bool ISNewSwitch(const char *dev, const char *name, ISState *states,
+                             char *names[], int n) override;
     virtual bool saveConfigItems(FILE *fp) override;
     virtual void addFITSKeywords(INDI::CCDChip *targetChip, std::vector<INDI::FITSRecord> &fitsKeyword) override;
 
 private:
     double m_exposureStart {0};
     double m_exposureDuration {0};
-    
+
     // Image callback support
     bool m_imageReady {false};
     QString m_pendingImagePath;
     QByteArray m_pendingImageData;
     double m_pendingImageRA {0};
     double m_pendingImageDec {0};
-    
+
     // State flags
     bool m_waitingForImage {false};
     bool m_useNextImage {false};
 
     // Gain/ISO property - like the simulator
     INDI::PropertyNumber GainNP {1};
-    enum { GAIN };    
+    enum { GAIN };
 
     // Preview/Full mode property
     INDI::PropertySwitch StreamSP {2};
     enum { STREAM_PREVIEW, STREAM_FULL };
     bool m_isPreviewMode {false};
-    
+
     // Methods
     void onImageReady(const QString& filePath, const QByteArray& imageData,
-                     double ra, double dec);
+                      double ra, double dec);
     bool processAndUploadImage(const QByteArray& imageData);
     double currentTime();
+};
+
+class OriginFocuser : public INDI::Focuser
+{
+public:
+    OriginFocuser();
+    virtual ~OriginFocuser();
+
+    virtual const char *getDefaultName() override;
+    virtual bool initProperties() override;
+    virtual bool updateProperties() override;
+
+protected:
+    virtual bool Connect() override;
+    virtual bool Disconnect() override;
+    virtual IPState MoveAbsFocuser(uint32_t targetTicks) override;
+    virtual IPState MoveRelFocuser(FocusDirection dir, uint32_t ticks) override;
+    virtual bool AbortFocuser() override;
+    virtual bool SyncFocuser(uint32_t ticks) override;
+    virtual void TimerHit() override;
+
+private:
+    bool m_connected {false};
+    int m_lastPosition {0};
+    bool m_hasPosition {false};
+    uint32_t m_targetPosition {0};
 };
