@@ -99,8 +99,10 @@ bool OriginTelescope::initProperties()
         TELESCOPE_CAN_SYNC |
         TELESCOPE_CAN_ABORT |
         TELESCOPE_CAN_PARK |
+        TELESCOPE_CAN_CONTROL_TRACK |
         TELESCOPE_HAS_TIME |
-        TELESCOPE_HAS_LOCATION,
+        TELESCOPE_HAS_LOCATION |
+        TELESCOPE_HAS_TRACK_MODE,
         4
     );
     
@@ -352,6 +354,43 @@ bool OriginTelescope::UnPark()
 
     qDebug() << ("Unparking telescope");
     return backend->unparkMount();
+}
+
+bool OriginTelescope::MoveNS(INDI_DIR_NS dir, TelescopeMotionCommand command)
+{
+    if (!m_connected)
+        return false;
+
+    bool start = (command == MOTION_START);
+    return dir == DIRECTION_NORTH ? backend->slewNorth(start) : backend->slewSouth(start);
+}
+
+bool OriginTelescope::MoveWE(INDI_DIR_WE dir, TelescopeMotionCommand command)
+{
+    if (!m_connected)
+        return false;
+
+    bool start = (command == MOTION_START);
+    return dir == DIRECTION_WEST ? backend->slewWest(start) : backend->slewEast(start);
+}
+
+bool OriginTelescope::SetTrackEnabled(bool enabled)
+{
+    if (!m_connected)
+        return false;
+
+    if (!backend->setTracking(enabled))
+        return false;
+
+    TrackState = enabled ? SCOPE_TRACKING : SCOPE_IDLE;
+    return true;
+}
+
+bool OriginTelescope::SetTrackMode(uint8_t mode)
+{
+    // Origin appears to expose tracking enable/disable only, not separate sidereal/solar/lunar rates.
+    LOGF_INFO("Requested track mode %u; using device default tracking rate", mode);
+    return true;
 }
 
 bool OriginTelescope::ISNewText(const char *dev, const char *name, char *texts[], char *names[], int n)
