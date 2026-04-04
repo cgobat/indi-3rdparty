@@ -699,7 +699,7 @@ void OriginBackendSimple::processMessage(const std::string& message)
     if (source == "ImageServer" && command == "NewImageReady" && type == "Notification")
     {
         QString filePath = obj["FileLocation"].toString();
-        if (!filePath.isEmpty() && filePath.endsWith(".tiff", Qt::CaseInsensitive))
+        if (!filePath.isEmpty())
         {
             requestImage(filePath);
         }
