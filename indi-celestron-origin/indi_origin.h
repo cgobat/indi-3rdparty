@@ -26,6 +26,10 @@ protected:
     virtual bool Abort() override;
     virtual bool Park() override;
     virtual bool UnPark() override;
+    virtual bool MoveNS(INDI_DIR_NS dir, TelescopeMotionCommand command) override;
+    virtual bool MoveWE(INDI_DIR_WE dir, TelescopeMotionCommand command) override;
+    virtual bool SetTrackEnabled(bool enabled) override;
+    virtual bool SetTrackMode(uint8_t mode) override;
     virtual void TimerHit() override;
     virtual bool ISNewText(const char *dev, const char *name, char *texts[], char *names[], int n) override;
 

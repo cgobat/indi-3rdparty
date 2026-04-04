@@ -98,6 +98,10 @@ public:
     bool parkMount();
     bool unparkMount();
     bool setTracking(bool enabled);
+    bool slewNorth(bool start);
+    bool slewSouth(bool start);
+    bool slewEast(bool start);
+    bool slewWest(bool start);
     bool isTracking() const;
 
     // Focuser operations

@@ -655,6 +655,14 @@ void OriginBackendSimple::processMessage(const std::string& message)
             m_status.isTracking = obj["IsTracking"].toBool();
         if (obj.contains("IsGotoOver"))
             m_status.isSlewing = !obj["IsGotoOver"].toBool();
+        if (obj.contains("IsAligned"))
+            m_status.isAligned = obj["IsAligned"].toBool();
+        if (obj.contains("CurrentOperation"))
+            m_status.currentOperation = obj["CurrentOperation"].toString();
+        if (obj.contains("Parked"))
+            m_status.isParked = obj["Parked"].toBool();
+        else if (m_status.currentOperation.compare("Parked", Qt::CaseInsensitive) == 0)
+            m_status.isParked = true;
 
         // Call status callback
         if (m_statusCallback)
@@ -766,6 +774,42 @@ bool OriginBackendSimple::setTracking(bool enabled)
 {
     QString command = enabled ? "StartTracking" : "StopTracking";
     sendCommand(command, "Mount");
+    return true;
+}
+
+bool OriginBackendSimple::slewNorth(bool start)
+{
+    QJsonObject params;
+    params["Direction"] = "North";
+    params["Start"] = start;
+    sendCommand("Slew", "Mount", params);
+    return true;
+}
+
+bool OriginBackendSimple::slewSouth(bool start)
+{
+    QJsonObject params;
+    params["Direction"] = "South";
+    params["Start"] = start;
+    sendCommand("Slew", "Mount", params);
+    return true;
+}
+
+bool OriginBackendSimple::slewEast(bool start)
+{
+    QJsonObject params;
+    params["Direction"] = "East";
+    params["Start"] = start;
+    sendCommand("Slew", "Mount", params);
+    return true;
+}
+
+bool OriginBackendSimple::slewWest(bool start)
+{
+    QJsonObject params;
+    params["Direction"] = "West";
+    params["Start"] = start;
+    sendCommand("Slew", "Mount", params);
     return true;
 }
 
