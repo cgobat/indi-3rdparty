@@ -1,0 +1,69 @@
+name: QSI Debian Packages
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-qsi-debs:
+    name: Build QSI Debian packages
+    runs-on: ubuntu-latest
+
+    container:
+      image: ghcr.io/indilib/ubuntu
+
+    steps:
+      - name: Get INDI 3rd Party Sources
+        uses: actions/checkout@v6
+        with:
+          path: indi-3rdparty
+
+      - name: Install Requisites
+        run: indi-3rdparty/scripts/requisites-install.sh
+
+      - name: Install Debian Packaging Requisites
+        run: |
+          $(command -v sudo) apt-get update
+          $(command -v sudo) apt-get install -y --no-install-recommends debhelper fakeroot dpkg-dev libftdi1-2
+
+      - name: Get INDI Core Package
+        uses: dawidd6/action-download-artifact@v21
+        with:
+          repo: indilib/indi
+          branch: master
+          workflow: linux.yml
+          name: indi-core-package-ubuntu
+          path: ./packages/
+
+      - name: Install INDI Core
+        run: $(command -v sudo) tar -hxvf packages/indi-core-package.tar --strip-components=1 -C /
+
+      - name: Build QSI Debian Packages
+        run: |
+          set -e
+          mkdir -p deb-artifacts
+          cd indi-3rdparty
+
+          # The libqsi Debian install manifest pins an exact patch-level
+          # shared-library filename that can lag the library produced by
+          # the build. Match the current libqsi 7.x payload instead.
+          find debian/libqsi -type f -name '*.install' \
+            -exec sed -i 's/libqsiapi\.so\.7\.6\.1/libqsiapi.so.7.*/g' {} +
+
+          # The libqsi Debian metadata still names the old runtime package
+          # libftdi1. Current Ubuntu images provide libftdi1-2.
+          find debian/libqsi -type f \
+            -exec sed -i 's/libftdi1\b/libftdi1-2/g' {} +
+
+          ./make_deb_pkgs libqsi
+          cp libqsi*.deb ../deb-artifacts/
+          $(command -v sudo) dpkg -i ../deb-artifacts/libqsi*.deb
+
+          ./make_deb_pkgs indi-qsi
+          cp indi-qsi*.deb ../deb-artifacts/
+
+      - name: Upload QSI Debian Packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: indi-qsi-deb-ubuntu
+          path: deb-artifacts/*.deb
+          if-no-files-found: error
