@@ -43,11 +43,12 @@ jobs:
           mkdir -p deb-artifacts
           cd indi-3rdparty
 
-          # The libqsi Debian install manifest pins an exact patch-level
-          # shared-library filename that can lag the library produced by
-          # the build. Match the current libqsi 7.x payload instead.
-          find debian/libqsi -type f -name '*.install' \
-            -exec sed -i 's/libqsiapi\.so\.7\.6\.1/libqsiapi.so.7.*/g' {} +
+          # Append the UTC build timestamp to the package versions so
+          # artifacts from different workflow runs are distinguishable.
+          deb_build_timestamp="$(date -u +%Y%m%d%H%M%S)"
+          DEB_BUILD_TIMESTAMP="$deb_build_timestamp" perl -0pi -e 's/^(\S+ \()([^)]+)(\) .*)$/$1$2+$ENV{DEB_BUILD_TIMESTAMP}$3/m' \
+            debian/libqsi/changelog \
+            debian/indi-qsi/changelog
 
           # The libqsi Debian metadata still names the old runtime package
           # libftdi1. Current Ubuntu images provide libftdi1-2.
