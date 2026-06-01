@@ -14,11 +14,8 @@ jobs:
         include:
           - arch: amd64
             runner: ubuntu-24.04
-            indi_core_artifact: indi-core-package-ubuntu
           - arch: arm64
             runner: ubuntu-24.04-arm
-            indi_core_artifact: indi-core-package-ubuntu-arm64
-
 
     steps:
       - name: Get INDI 3rd Party Sources
@@ -32,19 +29,26 @@ jobs:
       - name: Install Debian Packaging Requisites
         run: |
           $(command -v sudo) apt-get update
-          $(command -v sudo) apt-get install -y --no-install-recommends debhelper fakeroot dpkg-dev libftdi1-2
+          $(command -v sudo) apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            debhelper \
+            dpkg-dev \
+            fakeroot \
+            gnupg \
+            libftdi1-2
 
-      - name: Get INDI Core Package
-        uses: dawidd6/action-download-artifact@v21
-        with:
-          repo: indilib/indi
-          branch: master
-          workflow: linux.yml
-          name: ${{ matrix.indi_core_artifact }}
-          path: ./packages/
+      - name: Add StellarMate Repository
+        run: |
+          set -e
+          $(command -v sudo) install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://ppa.stellarmate.com/repos/apt/conf/sm.gpg.key | $(command -v sudo) gpg --dearmor -o /etc/apt/keyrings/stellarmate.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/stellarmate.gpg] https://ppa.stellarmate.com/repos/apt/stable noble main" | $(command -v sudo) tee /etc/apt/sources.list.d/stellarmate.list
+          $(command -v sudo) apt-get update
 
-      - name: Install INDI Core
-        run: $(command -v sudo) tar -hxvf packages/indi-core-package.tar --strip-components=1 -C /
+      - name: Install INDI Core Packages
+        run: |
+          $(command -v sudo) apt-get install -y --no-install-recommends indi-bin libindi-dev
 
       - name: Build QSI Debian Packages
         run: |
