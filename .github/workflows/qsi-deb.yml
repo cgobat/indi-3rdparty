@@ -13,14 +13,12 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             indi_core_artifact: indi-core-package-ubuntu
           - arch: arm64
             runner: ubuntu-24.04-arm
             indi_core_artifact: indi-core-package-ubuntu-arm64
 
-    container:
-      image: ghcr.io/indilib/ubuntu
 
     steps:
       - name: Get INDI 3rd Party Sources
