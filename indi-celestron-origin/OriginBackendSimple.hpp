@@ -109,6 +109,7 @@ public:
     bool moveFocuserRelative(int delta);
     bool abortFocuser();
     bool syncFocuser(int position);
+    void requestFocuserStatus();
 
     // Camera operations
     bool takeSnapshot(double exposure, int iso);

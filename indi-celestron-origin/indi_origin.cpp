@@ -866,16 +866,26 @@ const char *OriginFocuser::getDefaultName()
 bool OriginFocuser::initProperties()
 {
     INDI::Focuser::initProperties();
-    FocusAbsPosN[0].min = 0;
-    FocusAbsPosN[0].max = 60000;
-    FocusAbsPosN[0].step = 1;
-    FocusRelPosN[0].min = 1;
-    FocusRelPosN[0].max = 10000;
-    FocusRelPosN[0].step = 1;
-    FocusMaxPosN[0].value = 60000;
-    FocusMaxPosN[0].min = 1;
-    FocusMaxPosN[0].max = 60000;
-    FocusMaxPosN[0].step = 1;
+
+    FocusAbsPosNP[0].setMin(0);
+    FocusAbsPosNP[0].setMax(60000);
+    FocusAbsPosNP[0].setStep(1);
+    FocusAbsPosNP[0].setValue(0);
+
+    FocusRelPosNP[0].setMin(1);
+    FocusRelPosNP[0].setMax(10000);
+    FocusRelPosNP[0].setStep(1);
+    FocusRelPosNP[0].setValue(1);
+
+    FocusMaxPosNP[0].setMin(1);
+    FocusMaxPosNP[0].setMax(60000);
+    FocusMaxPosNP[0].setStep(1);
+    FocusMaxPosNP[0].setValue(60000);
+
+    FocusAbsPosNP.updateMinMax();
+    FocusRelPosNP.updateMinMax();
+    FocusMaxPosNP.updateMinMax();
+
     return true;
 }
 
@@ -905,7 +915,8 @@ IPState OriginFocuser::MoveAbsFocuser(uint32_t targetTicks)
         return IPS_ALERT;
 
     m_targetPosition = targetTicks;
-    FocusAbsPosNP.s = IPS_BUSY;
+    FocusAbsPosNP.setState(IPS_BUSY);
+    FocusAbsPosNP.apply();
     return IPS_BUSY;
 }
 
@@ -916,7 +927,8 @@ IPState OriginFocuser::MoveRelFocuser(FocusDirection dir, uint32_t ticks)
         return IPS_ALERT;
 
     m_targetPosition = static_cast<uint32_t>(std::max(0, m_lastPosition + signedTicks));
-    FocusRelPosNP.s = IPS_BUSY;
+    FocusRelPosNP.setState(IPS_BUSY);
+    FocusRelPosNP.apply();
     return IPS_BUSY;
 }
 
@@ -932,7 +944,8 @@ bool OriginFocuser::SyncFocuser(uint32_t ticks)
 
     m_lastPosition = static_cast<int>(ticks);
     m_hasPosition = true;
-    FocusAbsPosN[0].value = ticks;
+    FocusAbsPosNP[0].setValue(ticks);
+    FocusAbsPosNP.setState(IPS_OK);
     FocusAbsPosNP.apply();
     return backend->syncFocuser(static_cast<int>(ticks));
 }
@@ -945,22 +958,26 @@ void OriginFocuser::TimerHit()
     backend->poll();
     auto status = backend->status();
 
-    FocusAbsPosN[0].min = status.focuserMin;
-    FocusAbsPosN[0].max = status.focuserMax;
-    FocusMaxPosN[0].value = status.focuserMax;
-    FocusAbsPosN[0].value = status.focuserPosition;
+    FocusAbsPosNP[0].setMin(status.focuserMin);
+    FocusAbsPosNP[0].setMax(status.focuserMax);
+    FocusMaxPosNP[0].setValue(status.focuserMax);
+    FocusAbsPosNP[0].setValue(status.focuserPosition);
+    FocusAbsPosNP.updateMinMax();
+    FocusMaxPosNP.updateMinMax();
     m_lastPosition = status.focuserPosition;
     m_hasPosition = true;
 
     if (status.focuserMoving)
     {
-        FocusAbsPosNP.s = IPS_BUSY;
-        FocusRelPosNP.s = IPS_BUSY;
+        FocusAbsPosNP.setState(IPS_BUSY);
+    FocusAbsPosNP.apply();
+        FocusRelPosNP.setState(IPS_BUSY);
+    FocusRelPosNP.apply();
     }
     else
     {
-        FocusAbsPosNP.s = IPS_OK;
-        FocusRelPosNP.s = IPS_OK;
+        FocusAbsPosNP.setState(IPS_OK);
+        FocusRelPosNP.setState(IPS_OK);
     }
 
     FocusAbsPosNP.apply();
