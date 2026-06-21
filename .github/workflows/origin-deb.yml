@@ -1,0 +1,83 @@
+name: Celestron Origin Debian Packages
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-origin-debs:
+    name: Build Celestron Origin Debian packages (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Get INDI 3rd Party Sources
+        uses: actions/checkout@v6
+        with:
+          path: indi-3rdparty
+
+      - name: Install Build Dependencies
+        run: |
+          $(command -v sudo) apt-get update
+          $(command -v sudo) apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            cdbs \
+            cmake \
+            curl \
+            debhelper \
+            dpkg-dev \
+            fakeroot \
+            git \
+            gnupg \
+            libcfitsio-dev \
+            libcurl4-gnutls-dev \
+            libgsl-dev \
+            libnova-dev \
+            libssl-dev \
+            libtiff-dev \
+            pkg-config \
+            qtbase5-dev \
+            zlib1g-dev
+
+      - name: Add StellarMate Repository
+        run: |
+          set -e
+          $(command -v sudo) install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://ppa.stellarmate.com/repos/apt/conf/sm.gpg.key | $(command -v sudo) gpg --dearmor -o /etc/apt/keyrings/stellarmate.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/stellarmate.gpg] https://ppa.stellarmate.com/repos/apt/stable noble main" | $(command -v sudo) tee /etc/apt/sources.list.d/stellarmate.list
+          $(command -v sudo) apt-get update
+
+      - name: Install INDI Core Packages
+        run: |
+          $(command -v sudo) apt-get install -y --no-install-recommends indi-bin libindi-dev
+
+      - name: Build Celestron Origin Debian Packages
+        run: |
+          set -euo pipefail
+          mkdir -p deb-artifacts
+          cd indi-3rdparty
+
+          # Append the UTC build timestamp to the package version so
+          # artifacts from different workflow runs are distinguishable.
+          deb_build_timestamp="$(date -u +%Y%m%d%H%M%S)"
+          DEB_BUILD_TIMESTAMP="$deb_build_timestamp" perl -0pi -e 's/^(\S+ \()([^\)]+)(\) .*)$/$1$2+$ENV{DEB_BUILD_TIMESTAMP}$3/m' \
+            debian/indi-celestron-origin/changelog
+
+          ./make_deb_pkgs indi-celestron-origin
+
+          find . -maxdepth 2 -type f -name 'indi-celestron-origin*.deb' -exec cp {} ../deb-artifacts/ \;
+
+      - name: Upload Celestron Origin Debian Packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: indi-celestron-origin-deb-ubuntu-${{ matrix.arch }}
+          path: deb-artifacts/*.deb
+          if-no-files-found: error
