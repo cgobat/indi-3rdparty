@@ -588,6 +588,15 @@ void OriginCamera::TimerHit()
 {  
     if (!isConnected())
         return;
+
+    const QString backendDetector = backend->detectorName().trimmed();
+    if (m_detectorOverride.isEmpty() && !backendDetector.isEmpty())
+    {
+        const QByteArray utf8 = backendDetector.toUtf8();
+        IUSaveText(&DetectorT[0], utf8.constData());
+        DetectorTP.s = IPS_OK;
+        IDSetText(&DetectorTP, nullptr);
+    }
     
     if (InExposure)
     {
@@ -684,6 +693,11 @@ bool OriginCamera::initProperties()
     StreamSP[STREAM_FULL].fill("FULL", "Full Resolution", ISS_ON);
     StreamSP.fill(getDeviceName(), "STREAM_MODE", "Capture Mode", IMAGE_SETTINGS_TAB, 
                   IP_RW, ISR_1OFMANY, 60, IPS_IDLE);
+
+    IUFillText(&DetectorT[0], "DETECTOR", "Detector", "");
+    IUFillTextVector(&DetectorTP, DetectorT, 1, getDeviceName(),
+                     "ORIGIN_DETECTOR", "Detector", IMAGE_INFO_TAB, IP_RW, 60, IPS_IDLE);
+    defineProperty(&DetectorTP);
     
     m_isPreviewMode = false;
     
@@ -846,6 +860,24 @@ bool OriginCamera::ISNewSwitch(const char *dev, const char *name, ISState *state
     return INDI::CCD::ISNewSwitch(dev, name, states, names, n);
 }
 
+
+bool OriginCamera::ISNewText(const char *dev, const char *name, char *texts[], char *names[], int n)
+{
+    if (dev != nullptr && strcmp(dev, getDeviceName()) == 0)
+    {
+        if (!strcmp(name, DetectorTP.name))
+        {
+            IUUpdateText(&DetectorTP, texts, names, n);
+            m_detectorOverride = QString::fromUtf8(DetectorT[0].text ? DetectorT[0].text : "").trimmed();
+            DetectorTP.s = IPS_OK;
+            IDSetText(&DetectorTP, nullptr);
+            return true;
+        }
+    }
+
+    return INDI::CCD::ISNewText(dev, name, texts, names, n);
+}
+
 //=============================================================================
 // FOCUSER IMPLEMENTATION
 //=============================================================================
@@ -1004,5 +1036,12 @@ void OriginCamera::addFITSKeywords(INDI::CCDChip *targetChip, std::vector<INDI::
     INDI::CCD::addFITSKeywords(targetChip, fitsKeyword);
 
     fitsKeyword.push_back({"GAIN", GainNP[0].getValue(), 3, "ISO"});
+    fitsKeyword.push_back({"CCD-TEMP", backend->temperature(), 2, "Camera temperature [C]"});
+
+    QString detector = m_detectorOverride.trimmed();
+    if (detector.isEmpty())
+        detector = backend->detectorName().trimmed();
+    if (!detector.isEmpty())
+        fitsKeyword.push_back({"DETECTOR", detector.toStdString(), "Active camera detector"});
 }
 

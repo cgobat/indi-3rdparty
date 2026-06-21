@@ -69,6 +69,7 @@ public:
         int focuserMax = 60000;
         int cameraISO = 0;
         double cameraExposure = 0.0;
+        QString cameraDetector;
         QString currentOperation = "Idle";
         double temperature = 20.0;
     };
@@ -118,6 +119,7 @@ public:
     // Status
     TelescopeStatus status() const { return m_status; }
     double temperature() const { return m_status.temperature; }
+    QString detectorName() const { return m_status.cameraDetector; }
 
     // Callbacks
     void setImageCallback(ImageCallback cb) { m_imageCallback = cb; }
@@ -147,6 +149,7 @@ private:
     qint64 m_lastMountStatusRequestMs {0};
     qint64 m_lastFocuserStatusRequestMs {0};
     qint64 m_lastCameraStatusRequestMs {0};
+    qint64 m_lastCameraInfoRequestMs {0};
 
     // Callbacks
     ImageCallback m_imageCallback;
