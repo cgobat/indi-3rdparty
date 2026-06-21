@@ -1042,6 +1042,9 @@ void OriginCamera::addFITSKeywords(INDI::CCDChip *targetChip, std::vector<INDI::
     if (detector.isEmpty())
         detector = backend->detectorName().trimmed();
     if (!detector.isEmpty())
-        fitsKeyword.push_back({"DETECTOR", detector.toStdString(), "Active camera detector"});
+    {
+        QByteArray detectorBytes = detector.toUtf8();
+        fitsKeyword.emplace_back("DETECTOR", detectorBytes.constData(), "Active camera detector");
+    }
 }
 
