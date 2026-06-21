@@ -848,6 +848,12 @@ bool OriginBackendSimple::syncFocuser(int)
     return true;
 }
 
+void OriginBackendSimple::requestFocuserStatus()
+{
+    sendCommand("GetStatus", "Focuser");
+    m_lastFocuserStatusRequestMs = QDateTime::currentMSecsSinceEpoch();
+}
+
 bool OriginBackendSimple::takeSnapshot(double exposure, int iso)
 {
     QJsonObject params;
