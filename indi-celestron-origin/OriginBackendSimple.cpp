@@ -537,6 +537,11 @@ void OriginBackendSimple::poll()
         sendCommand("GetCaptureParameters", "Camera");
         m_lastCameraStatusRequestMs = nowMs;
     }
+    if (m_status.cameraDetector.isEmpty() && nowMs - m_lastCameraInfoRequestMs > 10000)
+    {
+        sendCommand("GetCameraInfo", "Camera");
+        m_lastCameraInfoRequestMs = nowMs;
+    }
 
     // Check for incoming messages
     int messageCount = 0;
@@ -583,6 +588,7 @@ bool OriginBackendSimple::connectToTelescope(const QString& host, int port)
     sendCommand("GetStatus", "Mount");
     sendCommand("GetStatus", "Focuser");
     sendCommand("GetCaptureParameters", "Camera");
+    sendCommand("GetCameraInfo", "Camera");
 
     return true;
 }
@@ -606,6 +612,7 @@ bool OriginBackendSimple::reconnectWebSocket()
         sendCommand("GetStatus", "Mount");
         sendCommand("GetStatus", "Focuser");
         sendCommand("GetCaptureParameters", "Camera");
+        sendCommand("GetCameraInfo", "Camera");
 
         return true;
     }
@@ -685,6 +692,22 @@ void OriginBackendSimple::processMessage(const std::string& message)
             m_status.cameraISO = obj["ISO"].toInt();
         if (obj.contains("Exposure"))
             m_status.cameraExposure = obj["Exposure"].toDouble();
+
+        const QStringList detectorKeys = {
+            "Detector", "DetectorName", "CameraModel", "CameraName", "Model", "Name", "Sensor", "SensorName", "SensorModel"
+        };
+        for (const auto &key : detectorKeys)
+        {
+            if (obj.contains(key) && obj[key].isString())
+            {
+                const QString value = obj[key].toString().trimmed();
+                if (!value.isEmpty())
+                {
+                    m_status.cameraDetector = value;
+                    break;
+                }
+            }
+        }
     }
     else if (source == "Environment")
     {

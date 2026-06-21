@@ -75,6 +75,7 @@ protected:
     // Only need this for the preview/full mode switch
     virtual bool ISNewSwitch(const char *dev, const char *name, ISState *states,
                              char *names[], int n) override;
+    virtual bool ISNewText(const char *dev, const char *name, char *texts[], char *names[], int n) override;
     virtual bool saveConfigItems(FILE *fp) override;
     virtual void addFITSKeywords(INDI::CCDChip *targetChip, std::vector<INDI::FITSRecord> &fitsKeyword) override;
 
@@ -101,6 +102,11 @@ private:
     INDI::PropertySwitch StreamSP {2};
     enum { STREAM_PREVIEW, STREAM_FULL };
     bool m_isPreviewMode {false};
+
+    // Optional manual detector override for FITS headers.
+    ITextVectorProperty DetectorTP;
+    IText DetectorT[1] {};
+    QString m_detectorOverride;
 
     // Methods
     void onImageReady(const QString& filePath, const QByteArray& imageData,
