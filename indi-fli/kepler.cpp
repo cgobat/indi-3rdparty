@@ -1264,17 +1264,19 @@ void Kepler::addFITSKeywords(INDI::CCDChip *targetChip, std::vector<INDI::FITSRe
 {
     INDI::CCD::addFITSKeywords(targetChip, fitsKeywords);
 
-    // INDI's generic EXPTIME is the requested duration. Preserve it separately,
-    // and use EXPTIME for the camera-accepted duration reported by libflipro.
+    // INDI's generic EXPTIME is only the requested exposure, but ideally that
+    // keyword should report the actual exposure duration, so here we store the
+    // original value as REQEXPT and then populate EXPTIME with the real value
+    // reported by the camera.
     for (auto &keyword : fitsKeywords)
     {
         if (keyword.key() == "EXPTIME")
         {
-            keyword = {"REQEXPT", keyword.valueDouble(), 9, "Requested exposure time (s)"};
+            keyword = {"REQEXPT", keyword.valueDouble(), 9, "[s] Requested exposure time"};
             break;
         }
     }
-    fitsKeywords.push_back({"EXPTIME", m_ActualExposure, 9, "Camera-reported exposure time (s)"});
+    fitsKeywords.push_back({"EXPTIME", m_ActualExposure, 9, "[s] Camera-reported exposure time"});
 
     struct MetadataKeyword
     {
@@ -1298,11 +1300,11 @@ void Kepler::addFITSKeywords(INDI::CCDChip *targetChip, std::vector<INDI::FITSRe
         {FPRO_META_KEYS::META_KEY_LOW_DARK_CURRENT, "LOWDARK", "Low dark current mode enabled", 0, true},
         {FPRO_META_KEYS::META_KEY_LOW_NOISE, "LOWNOISE", "Low noise mode enabled", 0, true},
         {FPRO_META_KEYS::META_KEY_GLOBAL_RESET, "GLOBRST", "Global reset mode enabled", 0, true},
-        {FPRO_META_KEYS::META_KEY_SENSOR_CHIP_TEMPERATURE, "SENS-TMP", "Sensor temperature (C)", 3, false},
-        {FPRO_META_KEYS::META_KEY_BASE_TEMPERATURE, "BASE-TMP", "Camera base temperature (C)", 3, false},
-        {FPRO_META_KEYS::META_KEY_FPGA_TEMPERATURE, "FPGA-TMP", "FPGA temperature (C)", 3, false},
-        {FPRO_META_KEYS::META_KEY_COOLER_TEMPERATURE, "COOL-TMP", "Cooler temperature (C)", 3, false},
-        {FPRO_META_KEYS::META_KEY_TEMPERATURE_SETPOINT, "SET-TEMP", "Temperature setpoint (C)", 3, false},
+        {FPRO_META_KEYS::META_KEY_SENSOR_CHIP_TEMPERATURE, "SENS-TMP", "[degC] Sensor temperature", 3, false},
+        {FPRO_META_KEYS::META_KEY_BASE_TEMPERATURE, "BASE-TMP", "[degC] Camera base temperature", 3, false},
+        {FPRO_META_KEYS::META_KEY_FPGA_TEMPERATURE, "FPGA-TMP", "[degC] FPGA temperature", 3, false},
+        {FPRO_META_KEYS::META_KEY_COOLER_TEMPERATURE, "COOL-TMP", "[degC] Cooler temperature", 3, false},
+        {FPRO_META_KEYS::META_KEY_TEMPERATURE_SETPOINT, "SET-TEMP", "[degC] Temperature setpoint", 3, false},
         {FPRO_META_KEYS::META_KEY_COOLER_DUTY_CYCLE, "COOLDUTY", "Cooler duty cycle", 3, false},
         {FPRO_META_KEYS::META_KEY_BLACK_LEVEL_ADJUST, "BLACKLVL", "Low-channel black level adjust", 3, false},
         {FPRO_META_KEYS::META_KEY_BLACK_LEVEL_HIGH_ADJUST, "BLKLVLHI", "High-channel black level adjust", 3, false},
