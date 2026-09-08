@@ -25,6 +25,7 @@
 #include <map>
 #include <locale>
 #include <codecvt>
+#include <mutex>
 #include <indielapsedtimer.h>
 
 #define FLI_MAX_SUPPORTED_CAMERAS 4
@@ -141,12 +142,14 @@ std::map<FPRODEVICETYPE, double> Kepler::SensorPixelSize
 ********************************************************************************/
 void Kepler::workerExposure(const std::atomic_bool &isAboutToQuit, float duration)
 {
-    int32_t result = FPROCtrl_SetExposure(m_CameraHandle, duration * 1e9, 0, false);
-    if (result != 0)
+    uint64_t actualExposure = 0;
+    int32_t result = FPROCtrl_SetExposureEx(m_CameraHandle, duration * 1e9, 0, false, &actualExposure, nullptr);
+    if (result < 0)
     {
         LOGF_ERROR("%s: Failed to start exposure: %d", __PRETTY_FUNCTION__, result);
         return;
     }
+    m_ActualExposure = actualExposure / 1e9;
 
     PrimaryCCD.setExposureDuration(duration);
     LOGF_DEBUG("StartExposure->setexp : %.3fs", duration);
@@ -204,6 +207,7 @@ void Kepler::workerExposure(const std::atomic_bool &isAboutToQuit, float duratio
     if (result >= 0)
     {
         FPROFrame_CaptureAbort(m_CameraHandle);
+        readFrameMetadata();
 
         // Send the merged image.
         switch (MergePlanesSP.findOnSwitchIndex())
@@ -965,6 +969,45 @@ void Kepler::prepareUnpacked()
     fproUnpacked.eMergeFormat = FPRO_IMAGE_FORMAT::IFORMAT_FITS;
 
 }
+
+/********************************************************************************
+*
+********************************************************************************/
+void Kepler::readFrameMetadata()
+{
+    m_FrameMetadata.clear();
+
+    uint8_t *metadata = nullptr;
+    switch (MergePlanesSP.findOnSwitchIndex())
+    {
+        case to_underlying(FPRO_HWMERGEFRAMES::HWMERGE_FRAME_BOTH):
+            metadata = fproUnpacked.pMergedMetaData;
+            break;
+        case to_underlying(FPRO_HWMERGEFRAMES::HWMERGE_FRAME_HIGHONLY):
+            metadata = fproUnpacked.pHighMetaData;
+            break;
+        case to_underlying(FPRO_HWMERGEFRAMES::HWMERGE_FRAME_LOWONLY):
+            metadata = fproUnpacked.pLowMetaData;
+            break;
+    }
+
+    if (metadata == nullptr || fproUnpacked.uiMetaDataSize == 0)
+        return;
+
+    // The metadata parser has process-global state, so serialize init/get sequences.
+    static std::mutex metadataMutex;
+    std::lock_guard<std::mutex> lock(metadataMutex);
+    if (FPROFrame_MetaValueInitBin(metadata, fproUnpacked.uiMetaDataSize) < 0)
+        return;
+
+    for (int key = 0; key < to_underlying(FPRO_META_KEYS::META_KEY_NUM); key++)
+    {
+        FPROMETAVALUE value {};
+        auto metadataKey = static_cast<FPRO_META_KEYS>(key);
+        if (FPROFrame_MetaValueGet(metadataKey, &value) >= 0)
+            m_FrameMetadata[metadataKey] = value;
+    }
+}
 /********************************************************************************
 *
 ********************************************************************************/
@@ -1220,6 +1263,83 @@ void Kepler::debugTriggered(bool enable)
 void Kepler::addFITSKeywords(INDI::CCDChip *targetChip, std::vector<INDI::FITSRecord> &fitsKeywords)
 {
     INDI::CCD::addFITSKeywords(targetChip, fitsKeywords);
+
+    // INDI's generic EXPTIME is the requested duration. Preserve it separately,
+    // and use EXPTIME for the camera-accepted duration reported by libflipro.
+    for (auto &keyword : fitsKeywords)
+    {
+        if (keyword.key() == "EXPTIME")
+        {
+            keyword = {"REQEXPT", keyword.valueDouble(), 9, "Requested exposure time (s)"};
+            break;
+        }
+    }
+    fitsKeywords.push_back({"EXPTIME", m_ActualExposure, 9, "Camera-reported exposure time (s)"});
+
+    struct MetadataKeyword
+    {
+        FPRO_META_KEYS metadataKey;
+        const char *fitsKey;
+        const char *comment;
+        int decimals;
+        bool integer;
+    };
+
+    static const MetadataKeyword metadataKeywords[] =
+    {
+        {FPRO_META_KEYS::META_KEY_CAMERA_MODEL, "CAMMODEL", "Camera model", 0, false},
+        {FPRO_META_KEYS::META_KEY_SERIAL_NUMBER, "CAM-SN", "Camera serial number", 0, false},
+        {FPRO_META_KEYS::META_KEY_FRAME_NUMBER, "FRAMENUM", "Camera frame number", 0, true},
+        {FPRO_META_KEYS::META_KEY_IMAGE_MODE, "IMGMODE", "Camera image mode", 0, true},
+        {FPRO_META_KEYS::META_KEY_GAIN_LOW, "GAINLOW", "Actual low-channel gain", 6, false},
+        {FPRO_META_KEYS::META_KEY_GAIN_HIGH, "GAINHIGH", "Actual high-channel gain", 6, false},
+        {FPRO_META_KEYS::META_KEY_GAIN_GLOBAL, "GAINGLOB", "Actual global gain", 6, false},
+        {FPRO_META_KEYS::META_KEY_HDR_MODE, "HDRMODE", "HDR mode enabled", 0, true},
+        {FPRO_META_KEYS::META_KEY_LOW_DARK_CURRENT, "LOWDARK", "Low dark current mode enabled", 0, true},
+        {FPRO_META_KEYS::META_KEY_LOW_NOISE, "LOWNOISE", "Low noise mode enabled", 0, true},
+        {FPRO_META_KEYS::META_KEY_GLOBAL_RESET, "GLOBRST", "Global reset mode enabled", 0, true},
+        {FPRO_META_KEYS::META_KEY_SENSOR_CHIP_TEMPERATURE, "SENS-TMP", "Sensor temperature (C)", 3, false},
+        {FPRO_META_KEYS::META_KEY_BASE_TEMPERATURE, "BASE-TMP", "Camera base temperature (C)", 3, false},
+        {FPRO_META_KEYS::META_KEY_FPGA_TEMPERATURE, "FPGA-TMP", "FPGA temperature (C)", 3, false},
+        {FPRO_META_KEYS::META_KEY_COOLER_TEMPERATURE, "COOL-TMP", "Cooler temperature (C)", 3, false},
+        {FPRO_META_KEYS::META_KEY_TEMPERATURE_SETPOINT, "SET-TEMP", "Temperature setpoint (C)", 3, false},
+        {FPRO_META_KEYS::META_KEY_COOLER_DUTY_CYCLE, "COOLDUTY", "Cooler duty cycle", 3, false},
+        {FPRO_META_KEYS::META_KEY_BLACK_LEVEL_ADJUST, "BLACKLVL", "Low-channel black level adjust", 3, false},
+        {FPRO_META_KEYS::META_KEY_BLACK_LEVEL_HIGH_ADJUST, "BLKLVLHI", "High-channel black level adjust", 3, false},
+        {FPRO_META_KEYS::META_KEY_BLACK_SUN_ADJUST, "BLACKSUN", "Low-channel black sun adjust", 3, false},
+        {FPRO_META_KEYS::META_KEY_BLACK_SUN_HIGH_ADJUST, "BLKSUNHI", "High-channel black sun adjust", 3, false},
+        {FPRO_META_KEYS::META_KEY_MERGE_GAIN_RATIO, "MRGRATIO", "Merge gain ratio", 6, false},
+        {FPRO_META_KEYS::META_KEY_MERGE_LINE_OFFSET, "MRGOFFST", "Merge line offset", 6, false},
+        {FPRO_META_KEYS::META_KEY_DATA_PIXEL_BIT_DEPTH, "DAT-BITS", "Output pixel bit depth", 0, true},
+        {FPRO_META_KEYS::META_KEY_SENSOR_PIXEL_BIT_DEPTH, "SNS-BITS", "Sensor pixel bit depth", 0, true},
+        {FPRO_META_KEYS::META_KEY_DATA_ZERO_POINT, "DATAZERO", "Output data zero point", 3, false},
+        {FPRO_META_KEYS::META_KEY_CORRELATED_MULTIPLE_SAMPLE, "CMS", "Correlated multiple sampling", 0, true},
+        {FPRO_META_KEYS::META_KEY_DEAD_PIXEL_CORRECTION, "DPCORR", "Dead pixel correction enabled", 0, true},
+        {FPRO_META_KEYS::META_KEY_VERSION_API, "APIVERS", "libflipro API version", 0, false},
+        {FPRO_META_KEYS::META_KEY_VERSION_FIRMWARE, "FWVERS", "Camera firmware version", 0, false},
+    };
+
+    for (const auto &entry : metadataKeywords)
+    {
+        auto metadata = m_FrameMetadata.find(entry.metadataKey);
+        if (metadata == m_FrameMetadata.end())
+            continue;
+
+        const auto &value = metadata->second;
+        if (value.iByteLength >= 0)
+        {
+            size_t length = std::min(static_cast<size_t>(value.iByteLength), sizeof(value.cStringValue));
+            std::string text(reinterpret_cast<const char *>(value.cStringValue), length);
+            auto terminator = text.find('\0');
+            if (terminator != std::string::npos)
+                text.resize(terminator);
+            fitsKeywords.push_back({entry.fitsKey, text.c_str(), entry.comment});
+        }
+        else if (entry.integer)
+            fitsKeywords.push_back({entry.fitsKey, static_cast<int64_t>(value.dblValue), entry.comment});
+        else
+            fitsKeywords.push_back({entry.fitsKey, value.dblValue, entry.decimals, entry.comment});
+    }
 
     if (RequestStatSP.findOnSwitchIndex() == INDI_ENABLED)
     {

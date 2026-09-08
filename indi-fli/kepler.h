@@ -29,6 +29,8 @@
 #include <inditimer.h>
 #include <indisinglethreadpool.h>
 
+#include <map>
+
 class Kepler : public INDI::CCD
 {
     public:
@@ -132,6 +134,7 @@ class Kepler : public INDI::CCD
         //****************************************************************************************
         bool setup();
         void prepareUnpacked();
+        void readFrameMetadata();
         void readTemperature();
         void readGPS();
 
@@ -156,6 +159,8 @@ class Kepler : public INDI::CCD
         FPROUNPACKEDIMAGES fproUnpacked;
         FPROUNPACKEDSTATS  fproStats;
         FPRO_HWMERGEENABLE mergeEnables;
+        std::map<FPRO_META_KEYS, FPROMETAVALUE> m_FrameMetadata;
+        double m_ActualExposure {0};
 
         // Format
         uint32_t m_FormatsCount;
