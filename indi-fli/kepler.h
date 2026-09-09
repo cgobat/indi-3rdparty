@@ -103,6 +103,11 @@ class Kepler : public INDI::CCD
         // Camera Mode
         INDI::PropertySwitch CameraModeSP {0};
 
+        // Reference Data
+        INDI::PropertySwitch RowReferencePixelsSP {2};
+        INDI::PropertyNumber FrameReferenceRowsNP {2};
+        INDI::PropertySwitch ElectricallyBlackPixelsSP {2};
+
 #ifdef LEGACY_MODE
         //****************************************************************************************
         // Legacy INDI Properties
@@ -133,6 +138,7 @@ class Kepler : public INDI::CCD
         // Communication Functions
         //****************************************************************************************
         bool setup();
+        bool updateFrameBufferSize();
         void prepareUnpacked();
         void readFrameMetadata();
         void readTemperature();
@@ -153,6 +159,16 @@ class Kepler : public INDI::CCD
         uint8_t m_ExposureRetry {0};
         INDI::SingleThreadPool m_Worker;
         uint32_t m_TotalFrameBufferSize {0};
+        uint32_t m_OutputWidth {0};
+        uint32_t m_OutputHeight {0};
+        uint32_t m_ActiveFrameX {0};
+        uint32_t m_ActiveFrameY {0};
+        uint32_t m_ActiveFrameWidth {0};
+        uint32_t m_ActiveFrameHeight {0};
+        bool m_HasRowReferencePixels {false};
+        bool m_HasFrameReferenceRows {false};
+        bool m_HasElectricallyBlackPixels {false};
+        bool m_ElectricallyBlackPixels {false};
 
         // Merging
         uint8_t *m_FrameBuffer {nullptr};

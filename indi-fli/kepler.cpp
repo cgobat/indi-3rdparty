@@ -230,6 +230,7 @@ void Kepler::workerExposure(const std::atomic_bool &isAboutToQuit, float duratio
         if (PrimaryCCD.getExposureDuration() > VERBOSE_EXPOSURE)
             LOG_INFO("Exposure done, downloading image...");
 
+        PrimaryCCD.setFrame(0, 0, m_OutputWidth * PrimaryCCD.getBinX(), m_OutputHeight * PrimaryCCD.getBinY());
         ExposureComplete(&PrimaryCCD);
     }
     else
@@ -341,6 +342,22 @@ bool Kepler::initProperties()
     RequestStatSP[INDI_DISABLED].fill("INDI_DISABLED", "Disabled", ISS_OFF);
     RequestStatSP.fill(getDeviceName(), "REQUEST_STATS", "Statistics", IMAGE_SETTINGS_TAB, IP_RW, ISR_1OFMANY, 60, IPS_IDLE);
 
+    // Reference Data
+    RowReferencePixelsSP[INDI_ENABLED].fill("INDI_ENABLED", "Enabled", ISS_OFF);
+    RowReferencePixelsSP[INDI_DISABLED].fill("INDI_DISABLED", "Disabled", ISS_ON);
+    RowReferencePixelsSP.fill(getDeviceName(), "ROW_REFERENCE_PIXELS", "Row Reference Pixels", IMAGE_SETTINGS_TAB,
+                              IP_RW, ISR_1OFMANY, 60, IPS_IDLE);
+
+    FrameReferenceRowsNP[0].fill("PRE_ROWS", "Pre-frame", "%.f", 0, 0, 1, 0);
+    FrameReferenceRowsNP[1].fill("POST_ROWS", "Post-frame", "%.f", 0, 0, 1, 0);
+    FrameReferenceRowsNP.fill(getDeviceName(), "FRAME_REFERENCE_ROWS", "Frame Reference Rows", IMAGE_SETTINGS_TAB,
+                              IP_RW, 60, IPS_IDLE);
+
+    ElectricallyBlackPixelsSP[INDI_ENABLED].fill("INDI_ENABLED", "Enabled", ISS_OFF);
+    ElectricallyBlackPixelsSP[INDI_DISABLED].fill("INDI_DISABLED", "Disabled", ISS_ON);
+    ElectricallyBlackPixelsSP.fill(getDeviceName(), "ELECTRICALLY_BLACK_PIXELS", "Electrically Black Pixels",
+                                   IMAGE_SETTINGS_TAB, IP_RW, ISR_1OFMANY, 60, IPS_IDLE);
+
     /*****************************************************************************************************
     // Legacy Properties
     ******************************************************************************************************/
@@ -415,6 +432,12 @@ bool Kepler::updateProperties()
         defineProperty(BlackSunAdjustNP);
         defineProperty(GPSStateLP);
         defineProperty(RequestStatSP);
+        if (m_HasRowReferencePixels)
+            defineProperty(RowReferencePixelsSP);
+        if (m_HasFrameReferenceRows)
+            defineProperty(FrameReferenceRowsNP);
+        if (m_HasElectricallyBlackPixels)
+            defineProperty(ElectricallyBlackPixelsSP);
     }
     else
     {
@@ -430,6 +453,9 @@ bool Kepler::updateProperties()
         deleteProperty(BlackSunAdjustNP);
         deleteProperty(GPSStateLP);
         deleteProperty(RequestStatSP);
+        deleteProperty(RowReferencePixelsSP);
+        deleteProperty(FrameReferenceRowsNP);
+        deleteProperty(ElectricallyBlackPixelsSP);
     }
 
     return true;
@@ -442,6 +468,23 @@ bool Kepler::ISNewNumber(const char *dev, const char *name, double values[], cha
 {
     if (dev != nullptr && !strcmp(dev, getDeviceName()))
     {
+        if (FrameReferenceRowsNP.isNameMatch(name))
+        {
+            FrameReferenceRowsNP.update(values, names, n);
+            uint32_t preRows = static_cast<uint32_t>(FrameReferenceRowsNP[0].getValue());
+            uint32_t postRows = static_cast<uint32_t>(FrameReferenceRowsNP[1].getValue());
+
+            if (FPROFrame_SetFrameReferenceRows(m_CameraHandle, preRows, postRows) >= 0 && updateFrameBufferSize())
+            {
+                FrameReferenceRowsNP.setState(IPS_OK);
+                saveConfig(FrameReferenceRowsNP);
+            }
+            else
+                FrameReferenceRowsNP.setState(IPS_ALERT);
+            FrameReferenceRowsNP.apply();
+            return true;
+        }
+
         // Black Level
         if (BlackLevelNP.isNameMatch(name))
         {
@@ -553,11 +596,42 @@ bool Kepler::ISNewSwitch(const char *dev, const char *name, ISState *states, cha
 {
     if (dev != nullptr && !strcmp(dev, getDeviceName()))
     {
+        if (RowReferencePixelsSP.isNameMatch(name))
+        {
+            RowReferencePixelsSP.update(states, names, n);
+            bool enabled = RowReferencePixelsSP.findOnSwitchIndex() == INDI_ENABLED;
+            if (FPROFrame_SetDummyPixelEnable(m_CameraHandle, enabled) >= 0 && updateFrameBufferSize())
+            {
+                RowReferencePixelsSP.setState(IPS_OK);
+                saveConfig(RowReferencePixelsSP);
+            }
+            else
+                RowReferencePixelsSP.setState(IPS_ALERT);
+            RowReferencePixelsSP.apply();
+            return true;
+        }
+
+        if (ElectricallyBlackPixelsSP.isNameMatch(name))
+        {
+            ElectricallyBlackPixelsSP.update(states, names, n);
+            bool enabled = ElectricallyBlackPixelsSP.findOnSwitchIndex() == INDI_ENABLED;
+            if (FPROCtrl_SetElectricallyBlackPixelEnable(m_CameraHandle, enabled) >= 0)
+            {
+                m_ElectricallyBlackPixels = enabled;
+                ElectricallyBlackPixelsSP.setState(IPS_OK);
+                saveConfig(ElectricallyBlackPixelsSP);
+            }
+            else
+                ElectricallyBlackPixelsSP.setState(IPS_ALERT);
+            ElectricallyBlackPixelsSP.apply();
+            return true;
+        }
+
         if (CameraModeSP.isNameMatch(name))
         {
             CameraModeSP.update(states, names, n);
             int index = CameraModeSP.findOnSwitchIndex();
-            if (FPROSensor_SetMode(m_CameraHandle, m_SensorModes[index].uiModeIndex) >= 0)
+            if (FPROSensor_SetMode(m_CameraHandle, m_SensorModes[index].uiModeIndex) >= 0 && updateFrameBufferSize())
                 CameraModeSP.setState(IPS_OK);
             else
                 CameraModeSP.setState(IPS_ALERT);
@@ -810,11 +884,53 @@ bool Kepler::setup()
 
     FPROFrame_SetImageArea(m_CameraHandle, 0, 0, maxWidth, maxHeight);
 
-    // Get required frame buffer size including all the metadata and extra bits added by the SDK.
-    // We need to only
-    m_TotalFrameBufferSize = FPROFrame_ComputeFrameSize(m_CameraHandle);
+    m_ActiveFrameWidth = maxWidth;
+    m_ActiveFrameHeight = maxHeight;
 
-    m_FrameBuffer = static_cast<uint8_t*>(malloc(m_TotalFrameBufferSize));
+    const auto rowReferencePixels = m_CameraCapabilitiesList[to_underlying(FPROCAPS::FPROCAP_ROW_REFERENCE_PIXELS)];
+    m_HasRowReferencePixels = rowReferencePixels != 0;
+    if (m_HasRowReferencePixels)
+    {
+        bool enabled = false;
+        if (FPROFrame_GetDummyPixelEnable(m_CameraHandle, &enabled) >= 0)
+        {
+            RowReferencePixelsSP[INDI_ENABLED].setState(enabled ? ISS_ON : ISS_OFF);
+            RowReferencePixelsSP[INDI_DISABLED].setState(enabled ? ISS_OFF : ISS_ON);
+            RowReferencePixelsSP.setState(IPS_OK);
+        }
+    }
+
+    const auto frameReferenceRows = m_CameraCapabilitiesList[to_underlying(FPROCAPS::FPROCAP_FRAME_REFERENCE_ROWS)];
+    const uint32_t maxPreRows = frameReferenceRows >> 16;
+    const uint32_t maxPostRows = frameReferenceRows & 0xFFFF;
+    m_HasFrameReferenceRows = frameReferenceRows != 0;
+    if (m_HasFrameReferenceRows)
+    {
+        FrameReferenceRowsNP[0].setMax(maxPreRows);
+        FrameReferenceRowsNP[1].setMax(maxPostRows);
+        uint32_t preRows = 0, postRows = 0;
+        if (FPROFrame_GetFrameReferenceRows(m_CameraHandle, &preRows, &postRows) >= 0)
+        {
+            FrameReferenceRowsNP[0].setValue(preRows);
+            FrameReferenceRowsNP[1].setValue(postRows);
+            FrameReferenceRowsNP.setState(IPS_OK);
+        }
+    }
+
+    bool electricallyBlackPixels = false;
+    m_HasElectricallyBlackPixels =
+        FPROCtrl_GetElectricallyBlackPixelEnable(m_CameraHandle, &electricallyBlackPixels) >= 0;
+    if (m_HasElectricallyBlackPixels)
+    {
+        m_ElectricallyBlackPixels = electricallyBlackPixels;
+        ElectricallyBlackPixelsSP[INDI_ENABLED].setState(electricallyBlackPixels ? ISS_ON : ISS_OFF);
+        ElectricallyBlackPixelsSP[INDI_DISABLED].setState(electricallyBlackPixels ? ISS_OFF : ISS_ON);
+        ElectricallyBlackPixelsSP.setState(IPS_OK);
+    }
+
+    // Get required frame buffer size including all the metadata and extra bits added by the SDK.
+    if (!updateFrameBufferSize())
+        return false;
     // This would allocate memory
     //PrimaryCCD.setFrameBufferSize(m_TotalFrameBufferSize);
     //    // This is actual image data size
@@ -939,6 +1055,30 @@ bool Kepler::setup()
 
     m_TemperatureTimer.start();
     m_GPSTimer.start();
+    return true;
+}
+
+/********************************************************************************
+*
+********************************************************************************/
+bool Kepler::updateFrameBufferSize()
+{
+    int32_t frameBufferSize = FPROFrame_ComputeFrameSizePixels(m_CameraHandle, &m_OutputWidth, &m_OutputHeight);
+    if (frameBufferSize < 0)
+    {
+        LOGF_ERROR("Failed to compute frame size: %d", frameBufferSize);
+        return false;
+    }
+
+    auto frameBuffer = static_cast<uint8_t*>(realloc(m_FrameBuffer, frameBufferSize));
+    if (frameBuffer == nullptr)
+    {
+        LOG_ERROR("Failed to allocate camera frame buffer");
+        return false;
+    }
+
+    m_FrameBuffer = frameBuffer;
+    m_TotalFrameBufferSize = frameBufferSize;
     return true;
 }
 
@@ -1084,12 +1224,13 @@ bool Kepler::UpdateCCDFrame(int x, int y, int w, int h)
     {
         // Set UNBINNED coords
         PrimaryCCD.setFrame(x, y, w, h);
+        m_ActiveFrameX = x;
+        m_ActiveFrameY = y;
+        m_ActiveFrameWidth = w;
+        m_ActiveFrameHeight = h;
 
         // Get required frame buffer size including all the metadata and extra bits added by the SDK.
-        // We need to only
-        m_TotalFrameBufferSize = FPROFrame_ComputeFrameSize(m_CameraHandle);
-        m_FrameBuffer = static_cast<uint8_t*>(realloc(m_FrameBuffer, m_TotalFrameBufferSize));
-        return true;
+        return updateFrameBufferSize();
     }
     else
     {
@@ -1245,6 +1386,12 @@ bool Kepler::saveConfigItems(FILE * fp)
         HighGainSP.save(fp);
     if (CameraModeSP.size() > 0)
         CameraModeSP.save(fp);
+    if (m_HasRowReferencePixels)
+        RowReferencePixelsSP.save(fp);
+    if (m_HasFrameReferenceRows)
+        FrameReferenceRowsNP.save(fp);
+    if (m_HasElectricallyBlackPixels)
+        ElectricallyBlackPixelsSP.save(fp);
 
     return true;
 }
@@ -1315,6 +1462,12 @@ void Kepler::addFITSKeywords(INDI::CCDChip *targetChip, std::vector<INDI::FITSRe
         {FPRO_META_KEYS::META_KEY_DATA_PIXEL_BIT_DEPTH, "DAT-BITS", "Output pixel bit depth", 0, true},
         {FPRO_META_KEYS::META_KEY_SENSOR_PIXEL_BIT_DEPTH, "SNS-BITS", "Sensor pixel bit depth", 0, true},
         {FPRO_META_KEYS::META_KEY_DATA_ZERO_POINT, "DATAZERO", "Output data zero point", 3, false},
+        {FPRO_META_KEYS::META_KEY_IMAGE_START_COLUMN, "ACTIVEX", "Active image start column", 0, true},
+        {FPRO_META_KEYS::META_KEY_IMAGE_START_ROW, "ACTIVEY", "Active image start row", 0, true},
+        {FPRO_META_KEYS::META_KEY_PRE_REFERENCE_PIXELS_PER_ROW, "REFPXPRE", "Pre-reference pixels per row", 0, true},
+        {FPRO_META_KEYS::META_KEY_POST_REFERENCE_PIXELS_PER_ROW, "REFPXPOS", "Post-reference pixels per row", 0, true},
+        {FPRO_META_KEYS::META_KEY_PRE_REFERENCE_ROW, "REFROWPR", "Pre-frame reference rows", 0, true},
+        {FPRO_META_KEYS::META_KEY_POST_REFERENCE_ROW, "REFROWPO", "Post-frame reference rows", 0, true},
         {FPRO_META_KEYS::META_KEY_CORRELATED_MULTIPLE_SAMPLE, "CMS", "Correlated multiple sampling", 0, true},
         {FPRO_META_KEYS::META_KEY_DEAD_PIXEL_CORRECTION, "DPCORR", "Dead pixel correction enabled", 0, true},
         {FPRO_META_KEYS::META_KEY_VERSION_API, "APIVERS", "libflipro API version", 0, false},
@@ -1342,6 +1495,10 @@ void Kepler::addFITSKeywords(INDI::CCDChip *targetChip, std::vector<INDI::FITSRe
         else
             fitsKeywords.push_back({entry.fitsKey, value.dblValue, entry.decimals, entry.comment});
     }
+
+    if (m_HasElectricallyBlackPixels)
+        fitsKeywords.push_back({"ELECBLCK", static_cast<int64_t>(m_ElectricallyBlackPixels),
+                                "Electrically black reference pixels"});
 
     if (RequestStatSP.findOnSwitchIndex() == INDI_ENABLED)
     {
@@ -1372,6 +1529,7 @@ void Kepler::addFITSKeywords(INDI::CCDChip *targetChip, std::vector<INDI::FITSRe
 void Kepler::UploadComplete(INDI::CCDChip *targetChip)
 {
     INDI_UNUSED(targetChip);
+    PrimaryCCD.setFrame(m_ActiveFrameX, m_ActiveFrameY, m_ActiveFrameWidth, m_ActiveFrameHeight);
 #ifdef LEGACY_MODE
     ExposureTriggerSP[0].setState(ISS_OFF);
     ExposureTriggerSP.setState(IPS_OK);
