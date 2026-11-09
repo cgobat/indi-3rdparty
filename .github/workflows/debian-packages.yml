@@ -1,0 +1,155 @@
+name: Debian packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      indi_core_ref:
+        description: INDI core branch, tag, or commit to build against
+        required: true
+        default: master
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: debian-packages-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Debian 13 / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    # The runner selects the architecture; the container selects the target OS.
+    # These packages target Debian 13, regardless of the runner's Ubuntu version.
+    container:
+      image: debian:trixie
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      DEB_BUILD_OPTIONS: nocheck
+
+    steps:
+      - name: Install packaging tools
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            ca-certificates git build-essential cmake ninja-build pkg-config \
+            debhelper devscripts dpkg-dev fakeroot python3
+
+      - name: Check out INDI third-party sources
+        uses: actions/checkout@v7
+        with:
+          path: indi-3rdparty
+          persist-credentials: false
+
+      - name: Check out INDI core
+        uses: actions/checkout@v7
+        with:
+          repository: indilib/indi
+          ref: ${{ inputs.indi_core_ref || 'master' }}
+          path: indi-core
+          persist-credentials: false
+
+      - name: Prepare package metadata
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          test "$(dpkg --print-architecture)" = "$EXPECTED_ARCH"
+          mkdir -p dist/core dist/libs dist/drivers
+          # Keep the packaging templates outside the source root while dpkg
+          # uses that root's debian/ directory for one source package at a time.
+          mv indi-3rdparty/debian "$RUNNER_TEMP/thirdparty-packaging"
+          {
+            echo "Target: Debian 13 (trixie), $EXPECTED_ARCH"
+            echo "Third-party commit: $(git -C indi-3rdparty rev-parse HEAD)"
+            echo "Core commit: $(git -C indi-core rev-parse HEAD)"
+          } > dist/build-info.txt
+
+      - name: Build and install INDI core packages
+        working-directory: indi-core
+        run: |
+          apt-get build-dep --yes --no-install-recommends .
+          version="$(dpkg-parsechangelog -S Version)+git${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}.$(git rev-parse --short HEAD)"
+          DEBFULLNAME="INDI CI" DEBEMAIL="noreply@github.com" \
+            dch --newversion "$version" --distribution trixie \
+            "Build INDI core for third-party driver artifacts."
+          dpkg-buildpackage --build=binary --no-sign -j"$(nproc)" --post-clean
+          mv ../*.deb ../dist/core/
+          apt-get install --yes --no-install-recommends ../dist/core/*.deb
+          ldconfig
+
+      - name: Build and install third-party libraries
+        working-directory: indi-3rdparty
+        run: |
+          cp -a "$RUNNER_TEMP/thirdparty-packaging/indi-3rdparty-libs" debian
+          apt-get build-dep --yes --no-install-recommends .
+          # SDK firmware-loading rules invoke fxload on the destination system.
+          sed -i '/^Depends:/ s/$/, fxload/' debian/control
+          version="$(dpkg-parsechangelog -S Version)+git${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}.$(git rev-parse --short HEAD)"
+          DEBFULLNAME="INDI CI" DEBEMAIL="noreply@github.com" \
+            dch --newversion "$version" --distribution trixie \
+            "Build third-party libraries from the checked-out commit."
+          dpkg-buildpackage --build=binary --no-sign -j"$(nproc)" --post-clean
+          mv ../*.deb ../dist/libs/
+          apt-get install --yes --no-install-recommends ../dist/libs/*.deb
+          ldconfig
+
+      - name: Build third-party drivers
+        working-directory: indi-3rdparty
+        run: |
+          rm -rf debian
+          cp -a "$RUNNER_TEMP/thirdparty-packaging/indi-3rdparty-drivers" debian
+          apt-get build-dep --yes --no-install-recommends .
+          # Additional dependencies for drivers enabled by the root CMake build.
+          apt-get install --yes --no-install-recommends \
+            libavcodec-dev libavdevice-dev libavformat-dev libavutil-dev \
+            libswscale-dev libfftw3-dev libgpiod-dev libhidapi-dev \
+            libbluetooth-dev libboost-regex-dev libgtest-dev libgmock-dev \
+            libmosquitto-dev libnutclient-dev libssl-dev libyaml-dev qtbase5-dev
+          version="$(dpkg-parsechangelog -S Version)+git${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}.$(git rev-parse --short HEAD)"
+          DEBFULLNAME="INDI CI" DEBEMAIL="noreply@github.com" \
+            dch --newversion "$version" --distribution trixie \
+            "Build third-party drivers from the checked-out commit."
+          dpkg-buildpackage --build=binary --no-sign -j"$(nproc)" --post-clean
+          mv ../*.deb ../dist/drivers/
+
+      - name: Verify and install generated packages
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          # Require the actual driver and SDK packages, not just core output.
+          test -n "$(find dist/drivers -name 'indi-3rdparty-drivers_*.deb' -print -quit)"
+          test -n "$(find dist/libs -name 'indi-3rdparty-libs_*.deb' -print -quit)"
+          while IFS= read -r -d '' package; do
+            arch="$(dpkg-deb --field "$package" Architecture)"
+            test "$arch" = "$EXPECTED_ARCH" || test "$arch" = all
+            dpkg-deb --info "$package"
+          done < <(find dist -name '*.deb' -print0)
+          apt-get install --yes --no-install-recommends ./dist/drivers/*.deb
+          ldconfig
+          dpkg --audit
+          (cd dist && find . -name '*.deb' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+
+      - name: Upload Debian packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: indi-3rdparty-debian-trixie-${{ matrix.arch }}
+          path: |
+            dist/**/*.deb
+            dist/build-info.txt
+            dist/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
