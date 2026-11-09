@@ -67,7 +67,7 @@ jobs:
           EXPECTED_ARCH: ${{ matrix.arch }}
         run: |
           test "$(dpkg --print-architecture)" = "$EXPECTED_ARCH"
-          mkdir -p dist/core dist/libs dist/drivers
+          mkdir -p dist/xisf dist/core dist/libs dist/drivers
           # Keep the packaging templates outside the source root while dpkg
           # uses that root's debian/ directory for one source package at a time.
           mv indi-3rdparty/debian "$RUNNER_TEMP/thirdparty-packaging"
@@ -76,6 +76,65 @@ jobs:
             echo "Third-party commit: $(git -C indi-3rdparty rev-parse HEAD)"
             echo "Core commit: $(git -C indi-core rev-parse HEAD)"
           } > dist/build-info.txt
+
+      - name: Build and install compatible LibXISF packages
+        run: |
+          # Trixie's 0.2.13 lacks the WCS conversion API used by INDI core.
+          mkdir -p "$RUNNER_TEMP/xisf-build"
+          git clone --depth 1 --branch v0.2.17 \
+            https://gitea.nouspiro.space/nou/libXISF.git \
+            "$RUNNER_TEMP/xisf-build/libxisf"
+          cd "$RUNNER_TEMP/xisf-build/libxisf"
+          test "$(git rev-parse HEAD)" = 7d94f01467b72cfca0bafd98c213060546ac7a03
+          echo "LibXISF commit: $(git rev-parse HEAD)" >> "$GITHUB_WORKSPACE/dist/build-info.txt"
+          mkdir debian
+          cat > debian/control <<'EOF'
+          Source: libxisf
+          Section: libs
+          Priority: optional
+          Maintainer: INDI CI <noreply@github.com>
+          Build-Depends: debhelper-compat (= 13), cmake, pkg-config,
+           liblz4-dev, libpugixml-dev, zlib1g-dev, libzstd-dev
+          Standards-Version: 4.6.2
+          Rules-Requires-Root: no
+
+          Package: libxisf0
+          Architecture: any
+          Multi-Arch: same
+          Depends: ${shlibs:Depends}, ${misc:Depends}
+          Description: Library to load and save XISF images
+           Shared library built for INDI's XISF support.
+
+          Package: libxisf-dev
+          Section: libdevel
+          Architecture: any
+          Multi-Arch: same
+          Depends: libxisf0 (= ${binary:Version}), ${misc:Depends}
+          Description: Development files for LibXISF
+           Headers and linker files for INDI's XISF support.
+          EOF
+          # printf supplies the recipe tabs required by make.
+          printf '%s\n' '#!/usr/bin/make -f' \
+            '%:' $'\tdh $@ --buildsystem=cmake' \
+            'override_dh_auto_configure:' \
+            $'\tdh_auto_configure -- -DUSE_BUNDLED_LIBS=OFF' > debian/rules
+          chmod +x debian/rules
+          printf '%s\n' 'usr/lib/*/libXISF.so.*' > debian/libxisf0.install
+          printf '%s\n' 'usr/include/*' 'usr/lib/*/libXISF.so' \
+            'usr/lib/*/pkgconfig/*' > debian/libxisf-dev.install
+          cp LICENSE debian/copyright
+          DEBFULLNAME="INDI CI" DEBEMAIL="noreply@github.com" \
+            dch --create --package libxisf --newversion 0.2.17-0+indi1 \
+            --distribution trixie "Build LibXISF with INDI's required WCS conversion API."
+          apt-get build-dep --yes --no-install-recommends .
+          dpkg-buildpackage --build=binary --no-sign -j"$(nproc)" --post-clean
+          mv ../*.deb "$GITHUB_WORKSPACE/dist/xisf/"
+          apt-get install --yes --no-install-recommends "$GITHUB_WORKSPACE"/dist/xisf/*.deb
+          ldconfig
+          # Check the header and shared-library symbol before compiling INDI.
+          printf '%s\n' '#include <libxisf.h>' \
+            'int main() { LibXISF::Image image; image.convertWCSToAstrometricSolution(); }' \
+            | c++ -std=c++17 -x c++ - -o "$RUNNER_TEMP/xisf-api-check" -lXISF
 
       - name: Build and install INDI core packages
         working-directory: indi-core
@@ -153,3 +212,4 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
+
